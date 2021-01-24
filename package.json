@@ -1,6 +1,6 @@
 {
     "name": "iledopapiezowej-api",
-    "version": "1.0.0",
+    "version": "1.16.2",
     "description": "API iledopapiezowej.pl",
     "main": "index.js",
     "scripts": {
