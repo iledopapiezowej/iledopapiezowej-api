@@ -22,7 +22,7 @@ const app = express(),
 
             if (typeof this._ips[ip] == 'undefined') this._ips[ip] = []
 
-            if (this._ips[ip].length >= (process.env.MAX_CONCURRENT || 5)) {
+            if (this._ips[ip].length >= (process.env.MAX_CONCURRENT || 15)) {
                 ws.close()
                 log(ip, `too many concurrent connections`)
             }
@@ -50,10 +50,10 @@ const app = express(),
         visibility(ws, visible) {
             if (ws.visibility && !visible) {
                 this._invisible++
-                log('-', this.counter(), `(${this.invisible()})`, ws.id)
+                log(' ', this.counter(), '\t', `(${this.invisible()}) -`, ws.id)
             } else if (!ws.visibility && visible) {
                 this._invisible--
-                log('+', this.counter(), `(${this.invisible()})`, ws.id)
+                log(' ', this.counter(), '\t', `(${this.invisible()}) +`, ws.id)
             }
             ws.visibility = visible
             this.broadcast()
@@ -61,15 +61,18 @@ const app = express(),
         broadcast() {
             let change = Math.abs(this._count - this._last)
             if (
-                change >= (process.env.HYSTERIA || 5) ||
-                change <= 5
-            )
+                change >= (process.env.HYSTERIA || 5) ||    // allow hysteria
+                this._count <= 5 && // precision at low counts
+                change > 0  // dont send on no change
+            ) {
+                this._last = this._count
                 for (let id in this._list) {
                     sendObject(this._list[id], {
                         type: 'count',
                         count: this._count
                     })
                 }
+            }
         }
     }
 
@@ -84,7 +87,7 @@ function log(...message) {
 wss.on('connection', function connection(ws, req) {
     Sockets.open(ws, req.headers['x-real-ip'])
 
-    log('+', Sockets.counter(), ws.id, req.headers['x-real-ip'])
+    log('+', Sockets.counter(), '\t', ws.id, req.headers['x-real-ip'])
 
     sendObject(ws, {
         type: 'sync.begin'
@@ -92,7 +95,7 @@ wss.on('connection', function connection(ws, req) {
 
     ws.on('close', function () {
         Sockets.close(ws)
-        log('-', Sockets.counter(), ws.id, req.headers['x-real-ip'])
+        log('-', Sockets.counter(), '\t', ws.id, req.headers['x-real-ip'])
     })
 
     ws.on('message', function (e) {
