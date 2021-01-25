@@ -1,0 +1,17 @@
+module.exports = {
+    apps: [{
+        name: "iledopapiezowej-api",
+        script: "./index.js",
+        env: {
+            NODE_ENV: "development",
+            PORT_API: 5501,
+            PORT_WS: 5502,
+            MAX_CONCURRENT: 5,
+            HYSTERIA: 2
+        },
+        env_production: {
+            NODE_ENV: "production",
+            PORT: "4000"
+        }
+    }]
+}
