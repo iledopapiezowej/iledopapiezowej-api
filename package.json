@@ -1,6 +1,6 @@
 {
     "name": "iledopapiezowej-api",
-    "version": "1.16.2",
+    "version": "1.17.0",
     "description": "API iledopapiezowej.pl",
     "main": "index.js",
     "scripts": {
@@ -11,6 +11,7 @@
     "license": "ISC",
     "dependencies": {
         "body-parser": "^1.19.0",
+        "dotenv": "^8.2.0",
         "express": "^4.17.1",
         "mongoose": "^5.9.20",
         "ws": "^7.4.2"
