@@ -7,6 +7,16 @@ const express = require("express"),
 const app = express(),
     wss = new websocket.Server({ port: process.env.PORT_WS || 5502 }),
     PORT_API = process.env.PORT_API || 5501,
+    Settings = {
+        maxWarns: 5,
+        timeoutDuration: 30e3,
+        nickLimit: 12,
+        burst: process.env.CHAT_BURST || 3,
+        maxConcurrent: process.env.MAX_CONCURRENT || 15,
+        hysteria: process.env.HYSTERIA || 5,
+        release: process.env.CHAT_RELEASE || 0.8,
+        messageMax: process.env.CHAT_MESSAGE || 120
+    },
     Sockets = {
         _count: 0,
         _invisible: 0,
@@ -18,43 +28,64 @@ const app = express(),
         _timeouts: {},
         open(ws, ip) {
 
-            let id = (new Date()).getTime().toString(36)
+            let id = Math.random().toString(36).slice(2, 10)    // 8 character id
 
             ws.id = id
             ws.visibility = true
             ws.ip = ip
-            ws.nick = 'anon'
+            ws.nick = 'anon_' + id.slice(1, 8)  // anon + 7 chars of id
             ws.burst = 0
             ws.warns = Sockets._warns[ip] ? Sockets._warns[ip] : 0
             ws.timeout = new Date()
             ws.role = undefined
+            ws.latest = []
 
+            // overwrite default send
+            ws._send = ws.send
+            ws.send = function (obj) { this._send(JSON.stringify(obj)) }
+
+            // default server feedback
+            ws.feedback = function(text) {
+                ws.send({
+                    type: 'chat',
+                    nick: 'serwer',
+                    role: 'root',
+                    content: text,
+                    time: new Date()
+                })
+            }
+
+            // add to ips list
             if (typeof this._ips[ip] == 'undefined') this._ips[ip] = []
+            this._ips[ip].push(id)
 
-            if (this._ips[ip].length >= (process.env.MAX_CONCURRENT || 15)) {
+            // kick if to many concurrent
+            if (this._ips[ip].length >= Settings.maxConcurrent) {
                 ws.close()
                 log(ip, `too many concurrent connections`)
             }
 
             this._list[id] = ws
-            this._ips[ip].push(id)
+
+            // propagate counter
             this._count++
             this.update()
         },
         close(ws) {
+            // propagate counter
             if (!ws.visibility) this._invisible--
             this._count--
             this.update()
             delete this._list[ws.id]
+
+            // free up nick
             if (ws.nick) {
                 this._nicks[ws.nick] = false
             }
 
+            // free up ip slot
             let index = this._ips[ws.ip].indexOf(ws.id)
             if (index != -1) this._ips[ws.ip].splice(index, 1)
-        },
-        invisible() {
-            return this._invisible
         },
         visibility(ws, visible) {
             if (ws.visibility && !visible) {
@@ -77,19 +108,26 @@ const app = express(),
                 return false
             }
         },
-        warn(ws, n) {
-            if (n) ws.warns = n
-            else ws.warns++
+        warn(ws, message = `Nie spam bo timeout`) {
+            ws.warns++
             this._warns[ws.ip] = ws.warns
+
+            ws.feedback(`${message} (${ws.warns}/${Settings.maxWarns} ostrzeżeń)`)
+
+            if (ws.warns >= Settings.maxWarns) {
+                ws.feedback(`No i masz timeout (${Settings.timeoutDuration / 1e3}s)`)
+                this.timeout(ws, 30e3)
+            }
         },
-        timeout(ws) {
-            this._timeouts[ws.ip] = new Date(new Date().getTime() + (30e3))
-            this.warn(ws, 0)
+        timeout(ws, time) {
+            this._timeouts[ws.ip] = ws.timeout = new Date(new Date().getTime() + (time))
+            this._warns[ws.ip] = ws.warns = 0
+            log(ws.id, 'timeout')
         },
         update() {
             let change = Math.abs(this._count - this._last)
             if (
-                change >= (process.env.HYSTERIA || 5) ||    // allow hysteria
+                change >= Settings.hysteria ||    // allow hysteria
                 this._count <= 5 && // precision at low counts
                 change > 0  // dont send on no change
             ) {
@@ -103,15 +141,16 @@ const app = express(),
             }
         },
         broadcast(data) {
+            // wss.broadcast(JSON.stringify(data))
             for (let id in this._list) {
-                sendObject(this._list[id], data)
+                this._list[id].send(data)
             }
         }
     }
 
-function sendObject(ws, object) {
-    return ws.send(JSON.stringify(object))
-}
+// function sendObject(ws, object) {
+//     return ws.send(JSON.stringify(object))
+// }
 
 function log(...message) {
     console.log(new Date().toLocaleTimeString('pl-PL'), ...message)
@@ -122,8 +161,24 @@ wss.on('connection', function connection(ws, req) {
 
     log('+', Sockets._count, '\t', ws.id, req.headers['x-real-ip'])
 
-    sendObject(ws, {
+    ws.send({
         type: 'sync.begin'
+    })
+
+    ws.send({
+        type: 'count',
+        count: Sockets._count,
+        invisible: Sockets._invisible
+    })
+
+    ws.send({
+        type: 'version',
+        version: package.version
+    })
+
+    ws.send({
+        type: 'id',
+        id: ws.id
     })
 
     ws.on('close', function () {
@@ -132,8 +187,11 @@ wss.on('connection', function connection(ws, req) {
     })
 
     ws.on('message', function (e) {
+
+        var data = JSON.parse(e),
+            now = new Date()
+
         function message(content) {
-            ws.lastMessage = process.hrtime()
             Sockets.broadcast({
                 type: 'chat',
                 nick: ws.nick,
@@ -143,160 +201,147 @@ wss.on('connection', function connection(ws, req) {
                 content: content,
                 time: now
             })
-        }
-
-        var data = JSON.parse(e),
-            now = new Date(),
-            maxWarns = 5
+        }        
 
         if (data.type == 'sync.received') {
-            sendObject(ws, {
+            ws.send({
                 type: 'sync.end',
                 time: Date.now()
             })
         } else if (data.type == 'visibility') {
             Sockets.visibility(ws, data.visible)
         } else if (data.type == 'chat') {
-            log(' \t', ws.id, ws.nick, '>', data.content)
-            if (new Date() < Sockets._timeouts[ws.ip]) {
-                sendObject(ws, {
-                    type: 'chat',
-                    nick: 'serwer',
-                    role: 'root',
-                    content: 'Trzeba było nie spamić',
-                    time: now
-                })
-                return
-            }
 
+            log(' \t', ws.id, ws.nick, '>', data.content)
+
+            // calculate message delta
             let delta = process.hrtime(ws.lastMessage),
-                burst = process.env.CHAT_BURST || 3,
-                release = process.env.CHAT_RELEASE || 0.8
+                burst = Settings.burst,
+                release = Settings.release
 
             delta = (delta[0] + delta[1] / 1e9)
 
+            // count bursts
             if (delta < release) {
                 ws.burst++
             } else {
                 ws.burst = 0
             }
+            ws.lastMessage = process.hrtime()
 
+            // kick for flooding
+            if (ws.burst > Settings.burst * 3)
+                ws.close()
+
+            // discard
+            // ws timed out
+            if (new Date() < Sockets._timeouts[ws.ip]) {
+                ws.feedback(`Trzeba było nie spamić (timeout do ${ws.timeout.toTimeString().slice(0, 8)})`)
+                return
+            }
+
+            // discard and warn
+            // too fast messages
             if (delta < release && ws.burst > burst) {
                 Sockets.warn(ws)
-                if (ws.warns > maxWarns) {
-                    sendObject(ws, {
-                        type: 'chat',
-                        nick: 'serwer',
-                        role: 'root',
-                        content: 'No i masz timeout',
-                        time: now
-                    })
-                    Sockets.timeout(ws)
-                } else {
-                    sendObject(ws, {
-                        type: 'chat',
-                        nick: 'serwer',
-                        role: 'root',
-                        content: `Nie spam, bo timeout (${ws.warns}/${maxWarns})`,
-                        time: now
-                    })
-                }
-
                 return
             }
 
-            if ((data.content.length > (process.env.CHAT_MESSAGE || 120)) || (data.content.length < 1)) {
-                sendObject(ws, {
-                    type: 'chat',
-                    nick: 'serwer',
-                    role: 'root',
-                    content: 'Wiadomość musi zawierać od 1 do 120 znaków',
-                    time: now
-                })
+            // discard
+            // content too long or too short
+            if ((data.content.length > Settings.messageMax) || (data.content.length < 1)) {
+                ws.feedback('Wiadomość musi zawierać od 1 do 120 znaków')
                 return
             }
 
+            // discard and warn 
+            // repetitive spam
+            if (ws.latest.indexOf(data.content) != -1) {
+                Sockets.warn(ws, `Może coś nowego napisz`)
+                return
+            }
+            ws.latest.push(data.content)
+            if (ws.latest.length > 2) ws.latest.shift()
+
+            // discard and warn
+            // blacklisted words
+            if (new RegExp([
+                'http',
+                '://',
+                '.com',
+                '.gg',
+                '.pl'
+            ].join("|")).test(data.content)) {
+                Sockets.warn(ws, `Nie`)
+                return
+            }
+
+            // discard and warn
+            // repetetive characters
+            // if(data.content.replace(new RegExp(data.content[Math.floor(Math.random() * (data.content.length))], 'g'), "").length < (data.content.length * 0.1))
+            // {
+            //     Sockets.warn(ws, `repetetive character`)
+            //     return
+            // }
+
+            // discard and warn
+            // blacklisted characters
+            // if (/[^\x00-\x7Fążśźęćń€łóĄŻŚŹĘĆŃÓŁ]/.test(data.content)) {
+            //     Sockets.warn(ws, `blacklist character`)
+            //     return
+            // }
+
+            // command parsing
             if (data.content.startsWith('/')) {
-                var arg = data.content.split(' '),
-                    nickLimit = 12
+
+                var arg = data.content.split(' ')
 
                 arg[0] = arg[0].slice(1)
 
                 switch (arg[0]) {
                     case 'nick':
-                        if (arg[1].length > nickLimit) {
-                            sendObject(ws, {
-                                type: 'chat',
-                                nick: 'serwer',
-                                role: 'root',
-                                content: `Nick może mieć maksymalnie ${nickLimit} znaków`,
-                                time: now
-                            })
+                        if (arg[1].length > Settings.nickLimit) {
+                            // invalid nick length
+                            ws.feedback(`Nick musi mieć między 1 a ${Settings.nickLimit} znaków`)
+
                         } else if (new RegExp([
                             'mathias',
+                            'malina',
                             'admin',
                             'serwer',
                             'root',
                             'local'
-                        ].join("|")).test(arg[1])) {
-                            sendObject(ws, {
-                                type: 'chat',
-                                nick: 'serwer',
-                                role: 'root',
-                                content: 'Nie możesz używać tego specjalnego nicku',
-                                time: now
-                            })
+                        ].join("|"), 'i').test(arg[1])) {
+                            // reserved nick
+                            ws.feedback('Nie możesz użyć tego nicku')
+
+                        } else if (/[^\x00-\x7Fążśźęćń€łóĄŻŚŹĘĆŃÓŁ]/.test(data.content)) {
+                            // invalid character
+                            ws.feedback(`Nick nie może zawierać znaków specjalnych`)
+                            return
+
                         } else {
                             if (Sockets.nick(ws, arg[1])) {
-                                sendObject(ws, {
-                                    type: 'chat',
-                                    nick: 'serwer',
-                                    role: 'root',
-                                    content: `Zmieniono nick na '${arg[1]}'`,
-                                    time: now
-                                })
+                                ws.feedback(`Zmieniono nick na '${arg[1]}'`)
                             } else {
-                                sendObject(ws, {
-                                    type: 'chat',
-                                    nick: 'serwer',
-                                    role: 'root',
-                                    content: 'Ten nick jest zajęty',
-                                    time: now
-                                })
+                                ws.feedback('Ten nick jest zajęty')
                             }
                         }
+
                         break;
                     case 'login':
-                        if (arg[2] === process.env[`pwd_${arg[1]}`]) {
-                            Sockets.nick(ws, arg[1])
-                            ws.role = 'owner'
-                        }
-                        break;
-                    case 'timeout':
-                        if ([
-                            'owner',
-                            'admin',
-                            'mod'
-                        ].includes(ws.role)) {
-
-                        }
+                        if (process.env[`pwd_${arg[1]}`])
+                            if (arg[2] === process.env[`pwd_${arg[1]}`]) {
+                                Sockets.nick(ws, arg[1])
+                                ws.role = 'owner'
+                                ws.feedback(`Zalogowano jako ${arg[1]}`)
+                            } 
                         break;
                 }
             } else {
                 message(data.content)
             }
         }
-    })
-
-    sendObject(ws, {
-        type: 'count',
-        count: Sockets._count,
-        invisible: Sockets._invisible
-    })
-
-    sendObject(ws, {
-        type: 'version',
-        version: package.version
     })
 });
 
