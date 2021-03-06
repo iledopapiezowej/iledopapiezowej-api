@@ -45,7 +45,7 @@ const app = express(),
             ws.send = function (obj) { this._send(JSON.stringify(obj)) }
 
             // default server feedback
-            ws.feedback = function(text) {
+            ws.feedback = function (text) {
                 ws.send({
                     type: 'chat',
                     nick: 'serwer',
@@ -201,7 +201,7 @@ wss.on('connection', function connection(ws, req) {
                 content: content,
                 time: now
             })
-        }        
+        }
 
         if (data.type == 'sync.received') {
             ws.send({
@@ -214,82 +214,84 @@ wss.on('connection', function connection(ws, req) {
 
             log(' \t', ws.id, ws.nick, '>', data.content)
 
-            // calculate message delta
-            let delta = process.hrtime(ws.lastMessage),
-                burst = Settings.burst,
-                release = Settings.release
+            if (ws.role !== 'owner') {
+                // calculate message delta
+                let delta = process.hrtime(ws.lastMessage),
+                    burst = Settings.burst,
+                    release = Settings.release
 
-            delta = (delta[0] + delta[1] / 1e9)
+                delta = (delta[0] + delta[1] / 1e9)
 
-            // count bursts
-            if (delta < release) {
-                ws.burst++
-            } else {
-                ws.burst = 0
+                // count bursts
+                if (delta < release) {
+                    ws.burst++
+                } else {
+                    ws.burst = 0
+                }
+                ws.lastMessage = process.hrtime()
+
+                // kick for flooding
+                if (ws.burst > Settings.burst * 3)
+                    ws.close()
+
+                // discard
+                // ws timed out
+                if (new Date() < Sockets._timeouts[ws.ip]) {
+                    ws.feedback(`Trzeba było nie spamić (timeout do ${ws.timeout.toTimeString().slice(0, 8)})`)
+                    return
+                }
+
+                // discard and warn
+                // too fast messages
+                if (delta < release && ws.burst > burst) {
+                    Sockets.warn(ws)
+                    return
+                }
+
+                // discard
+                // content too long or too short
+                if ((data.content.length > Settings.messageMax) || (data.content.length < 1)) {
+                    ws.feedback('Wiadomość musi zawierać od 1 do 120 znaków')
+                    return
+                }
+
+                // discard and warn 
+                // repetitive spam
+                if (ws.latest.indexOf(data.content) != -1) {
+                    Sockets.warn(ws, `Może coś nowego napisz`)
+                    return
+                }
+                ws.latest.push(data.content)
+                if (ws.latest.length > 2) ws.latest.shift()
+
+                // discard and warn
+                // blacklisted words
+                if (new RegExp([
+                    'http',
+                    '://',
+                    '.com',
+                    '.gg',
+                    '.pl'
+                ].join("|")).test(data.content)) {
+                    Sockets.warn(ws, `Nie`)
+                    return
+                }
+
+                // discard and warn
+                // repetetive characters
+                // if(data.content.replace(new RegExp(data.content[Math.floor(Math.random() * (data.content.length))], 'g'), "").length < (data.content.length * 0.1))
+                // {
+                //     Sockets.warn(ws, `repetetive character`)
+                //     return
+                // }
+
+                // discard and warn
+                // blacklisted characters
+                // if (/[^\x00-\x7Fążśźęćń€łóĄŻŚŹĘĆŃÓŁ]/.test(data.content)) {
+                //     Sockets.warn(ws, `blacklist character`)
+                //     return
+                // }
             }
-            ws.lastMessage = process.hrtime()
-
-            // kick for flooding
-            if (ws.burst > Settings.burst * 3)
-                ws.close()
-
-            // discard
-            // ws timed out
-            if (new Date() < Sockets._timeouts[ws.ip]) {
-                ws.feedback(`Trzeba było nie spamić (timeout do ${ws.timeout.toTimeString().slice(0, 8)})`)
-                return
-            }
-
-            // discard and warn
-            // too fast messages
-            if (delta < release && ws.burst > burst) {
-                Sockets.warn(ws)
-                return
-            }
-
-            // discard
-            // content too long or too short
-            if ((data.content.length > Settings.messageMax) || (data.content.length < 1)) {
-                ws.feedback('Wiadomość musi zawierać od 1 do 120 znaków')
-                return
-            }
-
-            // discard and warn 
-            // repetitive spam
-            if (ws.latest.indexOf(data.content) != -1) {
-                Sockets.warn(ws, `Może coś nowego napisz`)
-                return
-            }
-            ws.latest.push(data.content)
-            if (ws.latest.length > 2) ws.latest.shift()
-
-            // discard and warn
-            // blacklisted words
-            if (new RegExp([
-                'http',
-                '://',
-                '.com',
-                '.gg',
-                '.pl'
-            ].join("|")).test(data.content)) {
-                Sockets.warn(ws, `Nie`)
-                return
-            }
-
-            // discard and warn
-            // repetetive characters
-            // if(data.content.replace(new RegExp(data.content[Math.floor(Math.random() * (data.content.length))], 'g'), "").length < (data.content.length * 0.1))
-            // {
-            //     Sockets.warn(ws, `repetetive character`)
-            //     return
-            // }
-
-            // discard and warn
-            // blacklisted characters
-            // if (/[^\x00-\x7Fążśźęćń€łóĄŻŚŹĘĆŃÓŁ]/.test(data.content)) {
-            //     Sockets.warn(ws, `blacklist character`)
-            //     return
-            // }
 
             // command parsing
             if (data.content.startsWith('/')) {
@@ -335,7 +337,7 @@ wss.on('connection', function connection(ws, req) {
                                 Sockets.nick(ws, arg[1])
                                 ws.role = 'owner'
                                 ws.feedback(`Zalogowano jako ${arg[1]}`)
-                            } 
+                            }
                         break;
                 }
             } else {
