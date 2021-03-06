@@ -302,6 +302,8 @@ wss.on('connection', function connection(ws, req) {
 
                 switch (arg[0]) {
                     case 'nick':
+                        if(typeof arg[1] == "string")
+                        if(arg[1].length > 0)
                         if (arg[1].length > Settings.nickLimit) {
                             // invalid nick length
                             ws.feedback(`Nick musi mieć między 1 a ${Settings.nickLimit} znaków`)
