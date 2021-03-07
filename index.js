@@ -302,35 +302,35 @@ wss.on('connection', function connection(ws, req) {
 
                 switch (arg[0]) {
                     case 'nick':
-                        if(typeof arg[1] == "string")
-                        if(arg[1].length > 0)
-                        if (arg[1].length > Settings.nickLimit) {
-                            // invalid nick length
-                            ws.feedback(`Nick musi mieć między 1 a ${Settings.nickLimit} znaków`)
+                        if (typeof arg[1] == "string")
+                            if (arg[1].length > 0)
+                                if (arg[1].length > Settings.nickLimit) {
+                                    // invalid nick length
+                                    ws.feedback(`Nick musi mieć między 1 a ${Settings.nickLimit} znaków`)
 
-                        } else if (new RegExp([
-                            'mathias',
-                            'malina',
-                            'admin',
-                            'serwer',
-                            'root',
-                            'local'
-                        ].join("|"), 'i').test(arg[1])) {
-                            // reserved nick
-                            ws.feedback('Nie możesz użyć tego nicku')
+                                } else if (new RegExp([
+                                    'mathias',
+                                    'malina',
+                                    'admin',
+                                    'serwer',
+                                    'root',
+                                    'local'
+                                ].join("|"), 'i').test(arg[1])) {
+                                    // reserved nick
+                                    ws.feedback('Nie możesz użyć tego nicku')
 
-                        } else if (/[^\x00-\x7Fążśźęćń€łóĄŻŚŹĘĆŃÓŁ]/.test(data.content)) {
-                            // invalid character
-                            ws.feedback(`Nick nie może zawierać znaków specjalnych`)
-                            return
+                                } else if (/[^\x00-\x7Fążśźęćń€łóĄŻŚŹĘĆŃÓŁ]/.test(data.content)) {
+                                    // invalid character
+                                    ws.feedback(`Nick nie może zawierać znaków specjalnych`)
+                                    return
 
-                        } else {
-                            if (Sockets.nick(ws, arg[1])) {
-                                ws.feedback(`Zmieniono nick na '${arg[1]}'`)
-                            } else {
-                                ws.feedback('Ten nick jest zajęty')
-                            }
-                        }
+                                } else {
+                                    if (Sockets.nick(ws, arg[1])) {
+                                        ws.feedback(`Zmieniono nick na '${arg[1]}'`)
+                                    } else {
+                                        ws.feedback('Ten nick jest zajęty')
+                                    }
+                                }
 
                         break;
                     case 'login':
@@ -340,6 +340,18 @@ wss.on('connection', function connection(ws, req) {
                                 ws.role = 'owner'
                                 ws.feedback(`Zalogowano jako ${arg[1]}`)
                             }
+                        break;
+                    case 'ban':
+                        if (ws.role === 'owner') {
+                            if (arg[1]) {
+                                let banned = Sockets._list[arg[1]]
+                                if (banned) {
+                                    Sockets.timeout(banned, arg[2] ? arg[2] * 1e3 : 10 * 60 * 1e3)
+                                    ws.feedback(`${banned.nick} ${banned.id} został zbanowany`)
+                                }
+                            }
+
+                        }
                         break;
                 }
             } else {
