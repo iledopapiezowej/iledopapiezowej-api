@@ -27,136 +27,6 @@ const app = express(),
             'local'
         ]
     },
-    Sockets = {
-        _count: 0,
-        _invisible: 0,
-        _last: 0,
-        _list: {},
-        _ips: {},
-        _nicks: {},
-        _warns: {},
-        _timeouts: {},
-        open(ws, ip) {
-
-            let id = Math.random().toString(36).slice(2, 10)    // 8 character id
-
-            ws.id = id
-            ws.visibility = true
-            ws.ip = ip
-            ws.nick = 'anon_' + id.slice(1, 8)  // anon + 7 chars of id
-            ws.burst = 0
-            ws.warns = Sockets._warns[ip] ? Sockets._warns[ip] : 0
-            ws.timeout = new Date()
-            ws.role = undefined
-            ws.latest = []
-
-            // overwrite default send
-            ws._send = ws.send
-            ws.send = function (obj) { this._send(JSON.stringify(obj)) }
-
-            // default server feedback
-            ws.feedback = function (text) {
-                ws.send({
-                    type: 'chat',
-                    nick: 'serwer',
-                    role: 'root',
-                    content: text,
-                    time: new Date()
-                })
-            }
-
-            // add to ips list
-            if (typeof this._ips[ip] == 'undefined') this._ips[ip] = []
-            this._ips[ip].push(id)
-
-            // kick if to many concurrent
-            if (this._ips[ip].length >= Settings.maxConcurrent) {
-                ws.close()
-                log(ip, `too many concurrent connections`)
-            }
-
-            this._list[id] = ws
-
-            // propagate counter
-            this._count++
-            this.update()
-        },
-        close(ws) {
-            // propagate counter
-            if (!ws.visibility) this._invisible--
-            this._count--
-            this.update()
-            delete this._list[ws.id]
-
-            // free up nick
-            if (ws.nick) {
-                this._nicks[ws.nick] = false
-            }
-
-            // free up ip slot
-            let index = this._ips[ws.ip].indexOf(ws.id)
-            if (index != -1) this._ips[ws.ip].splice(index, 1)
-        },
-        visibility(ws, visible) {
-            if (ws.visibility && !visible) {
-                this._invisible++
-                // log(' ', this.counter(), '\t', `(${this.invisible()}) -`, ws.id)
-            } else if (!ws.visibility && visible) {
-                this._invisible--
-                // log(' ', this.counter(), '\t', `(${this.invisible()}) +`, ws.id)
-            }
-            ws.visibility = visible
-            this.update()
-        },
-        nick(ws, nick) {
-            if (!this._nicks[nick]) {
-                this._nicks[nick] = true
-                this._nicks[ws.nick] = false
-                ws.nick = nick
-                return true
-            } else {
-                return false
-            }
-        },
-        warn(ws, message = `Nie spam bo timeout`) {
-            ws.warns++
-            this._warns[ws.ip] = ws.warns
-
-            ws.feedback(`${message} (${ws.warns}/${Settings.maxWarns} ostrzeżeń)`)
-
-            if (ws.warns >= Settings.maxWarns) {
-                ws.feedback(`No i masz timeout (${Settings.timeoutDuration / 1e3}s)`)
-                this.timeout(ws, 30e3)
-            }
-        },
-        timeout(ws, time) {
-            this._timeouts[ws.ip] = ws.timeout = new Date(new Date().getTime() + (time))
-            this._warns[ws.ip] = ws.warns = 0
-            log(ws.id, 'timeout')
-        },
-        update() {
-            let change = Math.abs(this._count - this._last)
-            if (
-                change >= Settings.hysteria ||    // allow hysteria
-                this._count <= 5 && // precision at low counts
-                change > 0  // dont send on no change
-            ) {
-                this._last = this._count
-                this.broadcast({
-                    type: 'count',
-                    count: this._count,
-                    invisible: this._invisible
-                })
-                // log(' ', this.counter(), '\t', `(${this.invisible()})`)
-            }
-        },
-        broadcast(data) {
-            // wss.broadcast(JSON.stringify(data))
-            for (let id in this._list) {
-                this._list[id].send(data)
-            }
-        }
-    },
     Connections = {
         ips: {},
         list: {},
@@ -261,7 +131,7 @@ class Client {
         this.id = id
         this.ip = req.headers['x-real-ip']
 
-        this.nick = 'anon_' + id.slice(1, 8)  // anon + 7 chars of id
+        this.nick = 'anon_' + id  // anon + 7 chars of id
         this.nickPad = function(){return ' '.repeat(Settings.nickLimit-this.nick.length)+this.nick}
         this.visibility = true
         this.role = null
@@ -495,10 +365,9 @@ wss.on('connection', function connection(ws, req) {
         if (client.burst > Settings.burst * 3)
             client.end(4002, "Flooding")
 
-        // console.dir(client, { depth: 0 });
 
         if (data.type == 'sync.received') {
-            client.send({
+            client.transmit({
                 type: 'sync.end',
                 time: Date.now()
             })
