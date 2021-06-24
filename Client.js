@@ -18,6 +18,10 @@ class Client {
         this.id = id
         this.ip = req.headers['x-real-ip']
 
+        if(req.headers['cf-connecting-ip']){
+            this.ip = req.headers['cf-connecting-ip']
+        }
+
         this.nick = 'anon_' + id  // anon + 7 chars of id
         this.nickPad = function () { return ' '.repeat(Settings.nickLimit - this.nick.length) + this.nick }
         this.visibility = true
