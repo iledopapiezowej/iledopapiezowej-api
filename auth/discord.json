@@ -1,0 +1,8 @@
+{
+    "app_id": "821398015310299136",
+    "public_key": "bf613ad5da80c50661daa3ce250d44ec127eff8ebf4747088170fdb321d1ebf0",
+    "client_secret": "HGNJW6r9brk5maUXO89yRbFDpzg5cRiy",
+    "redirect_uris": [
+        "https://beta.iledopapiezowej.pl/api/discord/oauth"
+    ]
+}
