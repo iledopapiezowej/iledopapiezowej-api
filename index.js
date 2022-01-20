@@ -1,134 +1,66 @@
-const express = require("express"),
-    bodyParser = require("body-parser"),
-    websocket = require('ws'),
-    package = require('./package')
+import env from './env.js'
+
+import express from 'express'
+import bodyParser from 'body-parser'
+import websocket from 'ws'
+import fs from 'fs'
+
+import Client from './Client.js'
+
+const { PORT_API, PORT_WS, CHAT_RELEASE = 3, CHAT_BURST = 3 } = process.env
 
 const app = express(),
-    wss = new websocket.Server({ port: process.env.PORT_WS || 5502 }),
-    PORT_API = process.env.PORT_API || 5501,
-    Sockets = {
-        _count: 0,
-        _invisible: 0,
-        _last: 0,
-        _list: {},
-        _ips: {},
-        open(ws, ip) {
+	wss = new websocket.Server({ port: PORT_WS }),
+	pkg = JSON.parse(fs.readFileSync('package.json'))
 
-            let id = (new Date()).getTime().toString(36)
+wss.on('connection', (ws, req) => {
+	let client = new Client(ws, req)
 
-            ws.id = id
-            ws.visibility = true
-            ws.ip = ip
+	client.transmit({
+		type: 'info',
+		version: pkg.version,
+		supports: pkg.supports,
+		id: client.id,
+	})
 
-            if (typeof this._ips[ip] == 'undefined') this._ips[ip] = []
+	ws.on('close', (code, reason) => client.onClose(code, reason))
 
-            if (this._ips[ip].length >= (process.env.MAX_CONCURRENT || 15)) {
-                ws.close()
-                log(ip, `too many concurrent connections`)
-            }
+	ws.on('message', async function (payload) {
+		// try parse input
+		try {
+			var data = JSON.parse(payload)
+		} catch (error) {
+			return
+		}
 
-            this._list[id] = ws
-            this._ips[ip].push(id)
-            this._count++
-            this.broadcast()
-        },
-        close(ws) {
-            if (!ws.visibility) this._invisible--
-            this._count--
-            this.broadcast()
-            delete this._list[ws.id]
+		let client = ws.client
 
-            let index = this._ips[ws.ip].indexOf(ws.id)
-            if (index != -1) this._ips[ws.ip].splice(index, 1)
-        },
-        counter() {
-            return this._count
-        },
-        invisible() {
-            return this._invisible
-        },
-        visibility(ws, visible) {
-            if (ws.visibility && !visible) {
-                this._invisible++
-                log(' ', this.counter(), '\t', `(${this.invisible()}) -`, ws.id)
-            } else if (!ws.visibility && visible) {
-                this._invisible--
-                log(' ', this.counter(), '\t', `(${this.invisible()}) +`, ws.id)
-            }
-            ws.visibility = visible
-            this.broadcast()
-        },
-        broadcast() {
-            let change = Math.abs(this._count - this._last)
-            if (
-                change >= (process.env.HYSTERIA || 5) ||    // allow hysteria
-                this._count <= 5 && // precision at low counts
-                change > 0  // dont send on no change
-            ) {
-                this._last = this._count
-                for (let id in this._list) {
-                    sendObject(this._list[id], {
-                        type: 'count',
-                        count: this._count
-                    })
-                }
-            }
-        }
-    }
+		// calculate message delta
+		let delta = process.hrtime(client.lastMessage)
+		delta = delta[0] + delta[1] / 1e9
 
-function sendObject(ws, object) {
-    return ws.send(JSON.stringify(object))
-}
+		// count bursts
+		if (delta < CHAT_RELEASE) client.burstCount++
+		else client.burstCount = 0
 
-function log(...message) {
-    console.log(new Date().toLocaleTimeString('pl-PL'), ...message)
-}
+		client.lastMessage = process.hrtime()
+		client.messageDelta = delta
 
-wss.on('connection', function connection(ws, req) {
-    Sockets.open(ws, req.headers['x-real-ip'])
+		// kick for flooding
+		if (client.burstCount > CHAT_BURST * 3) client.close(4002, 'Flooding')
 
-    log('+', Sockets.counter(), '\t', ws.id, req.headers['x-real-ip'])
+		// Payload parsing
+		client.receive(data)
+	})
+})
 
-    sendObject(ws, {
-        type: 'sync.begin'
-    })
+app.use(bodyParser.json())
+app.use(bodyParser.urlencoded({ extended: true }))
 
-    ws.on('close', function () {
-        Sockets.close(ws)
-        log('-', Sockets.counter(), '\t', ws.id, req.headers['x-real-ip'])
-    })
-
-    ws.on('message', function (e) {
-        let data = JSON.parse(e)
-
-        if (data.type == 'sync.received') {
-            sendObject(ws, {
-                type: 'sync.end',
-                time: Date.now()
-            })
-        } else if (data.type == 'visibility') {
-            Sockets.visibility(ws, data.visible)
-        }
-    })
-
-    sendObject(ws, {
-        type: 'count',
-        count: Sockets.counter()
-    })
-
-    sendObject(ws, {
-        type: 'version',
-        version: package.version
-    })
-});
-
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
-
-app.get("/", (req, res) => {
-    res.json({ comment: "Welcome to iledopapiezowej.pl API" });
-});
+app.get('/', (req, res) => {
+	res.json({ comment: 'Welcome to iledopapiezowej.pl API' })
+})
 
 app.listen(PORT_API, () => {
-    console.log(`Server is running on port ${PORT_API}.`);
-});
+	console.info(`http: listening on ${PORT_API}.`)
+})
