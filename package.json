@@ -1,23 +1,27 @@
 {
-    "name": "iledopapiezowej-api",
-    "version": "1.18.0",
-    "supports": "2.0.2",
-    "description": "API iledopapiezowej.pl",
-    "main": "index.js",
-    "type": "module",
-    "scripts": {
-        "test": "echo \"Error: no test specified\" && exit 1",
-        "dev": "nodemon index.js"
-    },
-    "author": "Mateusz Pstrucha",
-    "license": "ISC",
-    "dependencies": {
-        "axios": "^0.21.1",
-        "body-parser": "^1.19.0",
-        "dotenv": "^8.2.0",
-        "express": "^4.17.1",
-        "js-levenshtein": "^1.1.6",
-        "mongoose": "^5.12.9",
-        "ws": "^7.4.2"
-    }
+	"name": "iledopapiezowej-api",
+	"version": "1.19.0",
+	"supports": "2.1.0",
+	"description": "API iledopapiezowej.pl",
+	"main": "index.js",
+	"type": "module",
+	"scripts": {
+		"test": "echo \"Error: no test specified\" && exit 1",
+		"dev": "NODE_ENV=development nodemon index.js"
+	},
+	"author": "Mateusz Pstrucha",
+	"license": "ISC",
+	"dependencies": {
+		"axios": "^0.21.1",
+		"body-parser": "^1.19.0",
+		"dotenv": "^8.2.0",
+		"express": "^4.17.1",
+		"got": "^12.0.0",
+		"js-levenshtein": "^1.1.6",
+		"jsonwebtoken": "^8.5.1",
+		"logging": "^3.3.0",
+		"mongoose": "^5.12.9",
+		"pino": "^7.6.4",
+		"ws": "^7.4.2"
+	}
 }
