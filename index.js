@@ -1,203 +1,66 @@
-import express from "express"
-import bodyParser from "body-parser"
+import env from './env.js'
+
+import express from 'express'
+import bodyParser from 'body-parser'
 import websocket from 'ws'
-import axios from 'axios'
 import fs from 'fs'
 
-import dotenv from 'dotenv'
-dotenv.config()
-
-// import Database from './Database.js'
-import Settings from './Settings.js'
-import Connections from './Connections.js'
 import Client from './Client.js'
-import Discord from './Discord.js'
+
+const { PORT_API, PORT_WS, CHAT_RELEASE = 3, CHAT_BURST = 3 } = process.env
 
 const app = express(),
-    wss = new websocket.Server({ port: Settings.wsPort }),
-    PORT_API = Settings.apiPort,
-    pkg = JSON.parse(fs.readFileSync('package.json')),
-    Creds = {}
+	wss = new websocket.Server({ port: PORT_WS }),
+	pkg = JSON.parse(fs.readFileSync('package.json'))
 
-fs.readdirSync('./auth').forEach(c => {
-    c = c.split('.')[0]
-    Creds[c] = JSON.parse(fs.readFileSync(`./auth/${c}.json`))
-});
+wss.on('connection', (ws, req) => {
+	let client = new Client(ws, req)
 
-function log(...message) {
-    console.log(new Date().toLocaleTimeString('pl-PL'), ...message)
-}
+	client.transmit({
+		type: 'info',
+		version: pkg.version,
+		supports: pkg.supports,
+		id: client.id,
+	})
 
-async function getCaptcha(client, token) {
-    let res = await axios.post('https://www.google.com/recaptcha/api/siteverify', undefined, {
-        params: {
-            secret: Creds.recaptcha.secret,
-            response: token,
-            remoteip: client.ip
-        }
-    })
+	ws.on('close', (code, reason) => client.onClose(code, reason))
 
-    client.captchaStatus = {
-        ...client.captchaStatus,
-        ...res.data
-    }
+	ws.on('message', async function (payload) {
+		// try parse input
+		try {
+			var data = JSON.parse(payload)
+		} catch (error) {
+			return
+		}
 
-    return res
-}
+		let client = ws.client
 
-wss.on('connection', function connection(ws, req) {
-    let client = new Client(ws, req)
+		// calculate message delta
+		let delta = process.hrtime(client.lastMessage)
+		delta = delta[0] + delta[1] / 1e9
 
-    client.transmit([
-        {
-            type: 'sync.begin'
-        },
-        {
-            type: 'count',
-            count: Connections.count,
-            invisible: Connections.invisible
-        },
-        {
-            type: 'version',
-            version: pkg.version,
-            supports: pkg.supports
-        },
-        {
-            type: 'id',
-            id: client.id
-        },
-        {
-            type: 'cachedMessages',
-            messages: Connections.cachedMessages
-        }
-    ])
+		// count bursts
+		if (delta < CHAT_RELEASE) client.burstCount++
+		else client.burstCount = 0
 
-    ws.on('close', function (code, reason) { client.close(code, reason) })
+		client.lastMessage = process.hrtime()
+		client.messageDelta = delta
 
-    ws.on('message', async function (payload) {
+		// kick for flooding
+		if (client.burstCount > CHAT_BURST * 3) client.close(4002, 'Flooding')
 
-        // try parse input
-        try {
-            var data = JSON.parse(payload)
-        } catch (error) {
-            return
-        }
+		// Payload parsing
+		client.receive(data)
+	})
+})
 
-        let client = ws.client
-        let delta = process.hrtime(client.lastMessage)
+app.use(bodyParser.json())
+app.use(bodyParser.urlencoded({ extended: true }))
 
-        // calculate message delta
-        delta = (delta[0] + delta[1] / 1e9)
-
-        // count bursts
-        if (delta < Settings.release) client.burstCount++
-        else client.burstCount = 0
-
-        client.lastMessage = process.hrtime()
-        client.messageDelta = delta
-
-        // kick for flooding
-        if (client.burstCount > Settings.burstCount * 3)
-            client.end(4002, "Flooding")
-
-        // Payload parsing
-
-        // time synchronisation
-        if (data.type == 'sync.received') {
-            client.transmit({
-                type: 'sync.end',
-                time: Date.now(),
-                heartbeat: data.heartbeat
-            })
-        }
-
-        // page visibility status
-        if (data.type == 'visibility') {
-            Connections.visibility(client, data.visible)
-        }
-
-        if (data.type == 'captcha') {
-            if (client.awaitCaptcha) {
-                client.awaitCaptcha.resolve(data.token)
-            }
-        }
-
-        // chat message
-        if (data.type == 'chat') {
-
-            if (typeof data.content != 'string') return
-
-            if (!client.captchaStatus.verified) {
-                let res = await client.requestCaptcha('chat')
-                    .catch(err => log(`${client.id} @ ${client.ip} failed to provide captcha:`, err))
-                    .then(token => getCaptcha(client, token))
-
-                if (res.data.success) {
-                    if (res.data.score > .75) {
-                        client.captchaStatus.verified = true
-                        client.burstCount = 0
-                        console.log(res.data.score)
-
-                    } else {
-                        log(`Insufficient captcha`, client.id, client.ip, res.data.score)
-                        return client.feedback(`Nie osiągnięto wymagań captcha`)
-                    }
-
-                } else return client.feedback(`Błąd weryfikacji captcha`)
-
-            }
-
-            if (data.content.startsWith('/')) { // command parsing
-                let arg = data.content.split(' ')   // split with spaces
-                arg[0] = arg[0].slice(1)    // remove slash
-
-                client.command(arg)
-
-            } else {    // chat parsing
-                let ok = client.chat(data.content)
-                log(ok ? '#' : '.', client.id, `${client.nickPad()}: ${data.content}`)
-
-            }
-        }
-    })
-});
-
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
-
-app.get("/", (req, res) => {
-    res.json({ comment: "Welcome to iledopapiezowej.pl API" });
-});
-
-app.get("/discord/oauth", (req, res) => {
-    // res.json({ status: 'ok', comment: "code granted" });
-
-    axios.request({
-        method: 'POST',
-        url: 'https://discord.com/api/oauth2/token',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        data: new URLSearchParams({
-            client_id: Creds.discord.app_id,
-            client_secret: Creds.discord.client_secret,
-            grant_type: 'authorization_code',
-            code: req.query.code,
-            redirect_uri: Creds.discord.redirect_uris[0],
-            scope: "identify"
-        })
-    }).then(function (response) {
-        let dc = new Discord({}, response.data.access_token)
-        dc.me().then(self => {
-            res.cookie('dc-id', self.id)
-            res.cookie('dc-token', 'aijnlmnsdioqwnlk')
-            res.redirect(302, '/ustawienia#discord')
-        })
-
-    }).catch(function (error) {
-        console.error(error);
-    });
-
-});
+app.get('/', (req, res) => {
+	res.json({ comment: 'Welcome to iledopapiezowej.pl API' })
+})
 
 app.listen(PORT_API, () => {
-    console.log(`Server is running on port ${PORT_API}.`);
-});
+	console.info(`http: listening on ${PORT_API}.`)
+})
