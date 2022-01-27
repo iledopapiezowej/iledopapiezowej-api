@@ -1,4 +1,4 @@
-import axios from 'axios'
+import got from 'got'
 import logger from '../../log.js'
 
 const log = logger.child({ module: 'captcha' })
@@ -12,26 +12,30 @@ function requestCaptcha(client, action = 'general') {
 	})
 }
 
-// TODO: replace axios with got
 async function verifyCaptcha(client, token) {
-	let { data } = await axios.post(
-		'https://www.google.com/recaptcha/api/siteverify',
-		undefined,
-		{
-			params: {
+	let body = await got
+		.post('https://www.google.com/recaptcha/api/siteverify', {
+			searchParams: {
 				secret: RECAPTCHA_SECRET,
 				response: token,
 				remoteip: client.ip,
 			},
-		}
-	)
+		})
+		.catch((err) => {
+			log.debug(err, `captcha err`)
+			return {
+				success: false,
+				score: 0,
+			}
+		})
+		.json()
 
 	client.captchaStatus = {
 		...client.captchaStatus,
-		...data,
+		...body,
 	}
 
-	log.debug({ id: client.id, ip: client.ip, data }, `verified captcha`)
+	log.debug({ id: client.id, ip: client.ip, data: body }, `verified captcha`)
 
 	return client.captchaStatus
 }
