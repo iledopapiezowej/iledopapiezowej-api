@@ -99,9 +99,13 @@ class Client {
 	}
 
 	sub(name) {
-		if (!Object.keys(this.modules).includes(name)) {
-			this.modules[name] = modules[name]
-			this.transmit({ type: name, ...this.modules[name].connect() })
+		if (
+			!Object.keys(this.modules).includes(name) && // is not subscribed
+			Object.keys(modules).includes(name) // module exists
+		) {
+			this.modules[name] = modules[name] // subscribe
+			this.modules[name].connect && // send initial packet if available
+				this.transmit({ type: name, ...this.modules[name].connect() })
 		}
 	}
 
