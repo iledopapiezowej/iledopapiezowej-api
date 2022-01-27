@@ -256,9 +256,7 @@ const chat = {
 			)
 		} else {
 			// chat parsing
-			console.time('parse')
 			let ok = send(client, content)
-			console.timeEnd('parse')
 			log.info({ id: client.id, ip: client.ip, content }, `${ok ? '#' : '.'}`)
 		}
 	},
