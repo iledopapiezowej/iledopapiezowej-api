@@ -13,11 +13,6 @@ const count = {
 	},
 	send(client, payload) {
 		client.transmit(payload)
-
-		log.info(
-			{ count: payload.count, invis: payload.invisible },
-			`$ ${payload.count}`
-		)
 	},
 	receive(client, { visible }) {
 		Connections.visibility(client, visible)

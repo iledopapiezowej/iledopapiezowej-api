@@ -93,6 +93,11 @@ var Connections = {
 		) {
 			this.last = this.count
 
+			log.info(
+				{ count: payload.count, invis: payload.invisible },
+				`$ ${payload.count}`
+			)
+
 			this.broadcast('count', {
 				count: this.count,
 				invisible: this.invisible,
