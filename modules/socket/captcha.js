@@ -21,6 +21,7 @@ async function verifyCaptcha(client, token) {
 				remoteip: client.ip,
 			},
 		})
+		.json()
 		.catch((err) => {
 			log.debug(err, `captcha err`)
 			return {
@@ -28,7 +29,6 @@ async function verifyCaptcha(client, token) {
 				score: 0,
 			}
 		})
-		.json()
 
 	client.captchaStatus = {
 		...client.captchaStatus,
