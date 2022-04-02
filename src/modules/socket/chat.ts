@@ -1,38 +1,43 @@
+import env from '../../env.js'
+
 import levenshtein from 'js-levenshtein'
 import logger from '../../log.js'
 
-import Connections from '../../Connections.js'
-import captcha from './captcha.js'
+import Client, { inload, outload, payloadChat, module } from '../../Client.js'
 
 const log = logger.child({ socket: 'chat' })
 
 const {
+	CHAT_ENABLE,
 	CHAT_BURST,
 	CHAT_MAX_MESSAGE,
 	CHAT_MAX_NICK,
-	CHAT_RESERVED = '',
+	CHAT_RESERVED,
 	CHAT_MAX_WARNS,
-} = process.env
+} = env
 
-const cachedMessages = []
+const cachedMessages: payloadChat[] = [],
+	latestMessages: { [id: string]: string[] } = {},
+	warns: { [ip: string]: number } = {},
+	timeouts: { [ip: string]: Date } = {}
 
-function send(client, message) {
+function send(client: Client, message: string) {
 	// discard
 	// ip banned
-	if (Connections.bans[client.ip]) {
-		feedback(
-			client,
-			`Trzeba było nie spamić (timeout do ${client.timedOut
-				.toTimeString()
-				.slice(0, 8)})`
-		)
-	}
+	// if (Client.isBanned(client.ip)) {
+	// 	feedback(
+	// 		client,
+	// 		`Trzeba było nie spamić (timeout do ${client.timedOut
+	// 			.toTimeString()
+	// 			.slice(0, 8)})`
+	// 	)
+	// }
 
 	// ws timed out
-	if (new Date() < client.timedOut) {
+	if (new Date() < timeouts[client.ip]) {
 		feedback(
 			client,
-			`Trzeba było nie spamić (timeout do ${client.timedOut
+			`Trzeba było nie spamić (timeout do ${timeouts[client.ip]
 				.toTimeString()
 				.slice(0, 8)})`
 		)
@@ -43,6 +48,7 @@ function send(client, message) {
 	// too fast messages
 	if (client.burstCount == CHAT_BURST) {
 		warn(client, 'Zwolnij')
+		return false
 	}
 
 	if (client.burstCount > CHAT_BURST) {
@@ -65,21 +71,22 @@ function send(client, message) {
 	// }
 
 	// keep latest sent messages
-	client.latestMessages.push(message)
-	if (client.latestMessages.length > 3) client.latestMessages.shift()
+	latestMessages[client.id] ?? (latestMessages[client.id] = ['', '', ''])
+	let clientLastMsgs = latestMessages[client.id]
 
+	clientLastMsgs.push(message)
+	if (clientLastMsgs.length > 3) clientLastMsgs.shift()
+
+	// TODO: optimize this mess
 	let l = {
-			ab: levenshtein(client.latestMessages[0], client.latestMessages[1]),
-			ac: levenshtein(client.latestMessages[0], client.latestMessages[2]),
-			bc: levenshtein(client.latestMessages[1], client.latestMessages[2]),
+			ab: levenshtein(clientLastMsgs[0], clientLastMsgs[1]),
+			ac: levenshtein(clientLastMsgs[0], clientLastMsgs[2]),
+			bc: levenshtein(clientLastMsgs[1], clientLastMsgs[2]),
 		},
 		avg = {
-			ab:
-				(client.latestMessages[0].length + client.latestMessages[1].length) / 2,
-			ac:
-				(client.latestMessages[0].length + client.latestMessages[2].length) / 2,
-			bc:
-				(client.latestMessages[1].length + client.latestMessages[2].length) / 2,
+			ab: (clientLastMsgs[0].length + clientLastMsgs[1].length) / 2,
+			ac: (clientLastMsgs[0].length + clientLastMsgs[2].length) / 2,
+			bc: (clientLastMsgs[1].length + clientLastMsgs[2].length) / 2,
 		},
 		calc = {
 			ab: l.ab / avg.ab,
@@ -87,12 +94,12 @@ function send(client, message) {
 			bc: l.bc / avg.bc,
 		}
 
-	client.messageOffsetAvg = ((calc.ab + calc.ac + calc.bc) / 3).toFixed(2)
-	client.messageOffsetMin = Math.min(calc.ab, calc.ac, calc.bc).toFixed(2)
+	let messageOffsetAvg = (calc.ab + calc.ac + calc.bc) / 3,
+		messageOffsetMin = Math.min(calc.ab, calc.ac, calc.bc)
 
 	// discard and warn
 	// spam
-	if (client.messageOffsetAvg <= 0.66) {
+	if (messageOffsetAvg <= 0.66) {
 		warn(client, 'we we nie spam')
 		return true
 	}
@@ -132,12 +139,12 @@ function send(client, message) {
 	}
 
 	// Connections.cacheMessage(payload)
-	Connections.broadcast('chat', payload)
+	Client.broadcast('chat', payload)
 
 	return true
 }
 
-function command(client, arg) {
+function command(client: Client, arg: string[]) {
 	switch (arg[0]) {
 		case 'nick':
 			if (typeof arg[1] != 'string') return false
@@ -156,7 +163,7 @@ function command(client, arg) {
 				feedback(client, `Nick nie może zawierać znaków specjalnych`)
 				return false
 			} else {
-				if (Connections.nick(client, arg[1])) {
+				if (Client.nick(client, arg[1])) {
 					feedback(client, `Zmieniono nick na '${arg[1]}'`)
 					return true
 				} else {
@@ -168,7 +175,7 @@ function command(client, arg) {
 		case 'login':
 			if (process.env[`pwd_${arg[1]}`])
 				if (arg[2] === process.env[`pwd_${arg[1]}`]) {
-					Connections.nick(client, arg[1])
+					Client.nick(client, arg[1])
 					client.role = 'owner'
 					feedback(client, `Zalogowano jako ${arg[1]}`)
 					return true
@@ -176,64 +183,90 @@ function command(client, arg) {
 			arg[2] = '***'
 			return false
 
-		case 'ban':
-			if (client.role === 'owner') {
-				if (arg[1]) {
-					let banned = Connections.list[arg[1]]
-					if (banned) {
-						Connections.timeout(banned, arg[2] ? arg[2] * 1e3 : 10 * 60 * 1e3)
-						feedback(client, `${banned.nick} ${banned.id} został zbanowany`)
-						return true
-					}
-				}
-			}
+		default:
 			return false
+
+		// case 'ban':
+		// 	if (client.role === 'owner') {
+		// 		if (arg[1]) {
+		// 			let banned = Connections.list[arg[1]]
+		// 			if (banned) {
+		// 				Connections.timeout(banned, arg[2] ? arg[2] * 1e3 : 10 * 60 * 1e3)
+		// 				feedback(client, `${banned.nick} ${banned.id} został zbanowany`)
+		// 				return true
+		// 			}
+		// 		}
+		// 	}
+		// 	return false
 	}
 }
 
-function feedback(client, message) {
-	client.transmit({
-		type: 'chat',
-		nick: 'serwer',
-		role: 'root',
-		content: message,
-		time: new Date(),
-	})
+function feedback(client: Client, message: string) {
+	client.transmit(
+		{
+			nick: 'serwer',
+			role: 'root',
+			content: message,
+			time: new Date(),
+		},
+		'chat'
+	)
 }
 
-function warn(client, message) {
-	feedback(client, `${message} (${client.warns}/${CHAT_MAX_WARNS})`)
+function warn(client: Client, message: string) {
+	warns[client.ip] ? warns[client.ip]++ : (warns[client.ip] = 1)
+
+	if (warns[client.ip] >= CHAT_MAX_WARNS) {
+		timeout(client, 10)
+		warns[client.ip] = 0
+	} else
+		feedback(client, `${message} (${warns[client.ip]}/${CHAT_MAX_WARNS - 1})`)
 }
 
-const chat = {
+function timeout(client: Client, seconds: number) {
+	if (timeouts[client.ip])
+		if (timeouts[client.ip].getTime() - Date.now() < 30e3) {
+			return Client.ban(client, 'Za dużo timeoutów')
+		}
+
+	timeouts[client.ip] = new Date(Date.now() + seconds * 1e3)
+	feedback(client, `Timeout ${seconds}s`)
+}
+
+const chat: module = {
 	label: 'chat',
 
 	feedback: feedback,
 	warn: warn,
 
-	connect() {
+	connect(): outload {
 		return {
 			flag: 'messages',
 			messages: cachedMessages,
 		}
 	},
 
-	send(client, payload) {
-		client.transmit(payload)
+	send(client: Client, payload: payloadChat) {
+		client.transmit(payload, 'chat')
 
 		cachedMessages.push(payload)
 		if (cachedMessages.length > 30) cachedMessages.shift()
 	},
 
-	async receive(client, { content }) {
+	async receive(client: Client, { content }: inload) {
 		if (typeof content != 'string') return
 
-		if (!client.captchaStatus.verified) {
-			let { success, score } = await captcha.request(client, 'chat')
+		if (!CHAT_ENABLE) return feedback(client, 'czat tymczasowo niedostępny')
+
+		if (!client.captcha.verified && !client.captcha.await) {
+			let { success, score } = await Client.modules.captcha.request(
+				client,
+				'chat'
+			)
 
 			if (success) {
-				if (score > 0.75) {
-					client.captchaStatus.verified = true
+				if (score ?? 0 > 0.75) {
+					client.captcha.verified = true
 					client.burstCount = 0
 				} else {
 					log.warn(
@@ -262,4 +295,4 @@ const chat = {
 	},
 }
 
-export default chat
+export default chat as module

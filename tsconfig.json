@@ -1,0 +1,31 @@
+{
+	"compilerOptions": {
+		"baseUrl": "src",
+
+		"esModuleInterop": true,
+		"allowSyntheticDefaultImports": true,
+		"moduleResolution": "node",
+		"resolveJsonModule": true,
+		"module": "esnext",
+		"target": "esnext",
+
+		"sourceMap": true,
+		"outDir": "build",
+
+		"paths": {
+			"*": ["../node_modules/*", "*"]
+		},
+
+		"noImplicitReturns": true,
+		"noImplicitAny": true,
+		"noFallthroughCasesInSwitch": true,
+		// "noUnusedLocals": true,
+
+		"strict": true,
+		"forceConsistentCasingInFileNames": true,
+		"isolatedModules": true
+	},
+	"compileOnSave": true,
+	"include": ["src"],
+	"exclude": ["node_modules/"]
+}
