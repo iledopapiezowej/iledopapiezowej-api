@@ -19,7 +19,7 @@
 		"js-levenshtein": "^1.1.6",
 		"jsonwebtoken": "^8.5.1",
 		"logging": "^3.3.0",
-		"mongoose": "^5.12.9",
+		"mongoose": "^5.13.15",
 		"pino": "^7.6.4",
 		"ws": "^7.4.2"
 	}
