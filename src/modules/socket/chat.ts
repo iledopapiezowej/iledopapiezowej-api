@@ -3,75 +3,50 @@ import env from '../../env.js'
 import levenshtein from 'js-levenshtein'
 import logger from '../../log.js'
 
-import Client, { inload, outload, payloadChat, module } from '../../Client.js'
+import Client, { outload, module } from '../../Client.js'
+import ClientStore from '../../ClientStore.js'
 
 const log = logger.child({ socket: 'chat' })
 
 const {
-	CHAT_ENABLE,
-	CHAT_BURST,
-	CHAT_MAX_MESSAGE,
-	CHAT_MAX_NICK,
-	CHAT_RESERVED,
-	CHAT_MAX_WARNS,
-} = env
+		CHAT_ENABLE,
+		CHAT_BURST,
+		CHAT_RELEASE,
+		CHAT_MAX_MESSAGE,
+		CHAT_MAX_NICK,
+		CHAT_RESERVED,
+		CHAT_MAX_WARNS,
+	} = env,
+	goldenHour: [number, number, number, number] = [21, 0, 0, 0],
+	goldenHourDuration = 3600e3
 
-const cachedMessages: payloadChat[] = [],
-	latestMessages: { [id: string]: string[] } = {},
-	warns: { [ip: string]: number } = {},
-	timeouts: { [ip: string]: Date } = {}
+const cachedMessages: outload[] = []
 
-function send(client: Client, message: string) {
-	// discard
-	// ip banned
-	// if (Client.isBanned(client.ip)) {
-	// 	feedback(
-	// 		client,
-	// 		`Trzeba było nie spamić (timeout do ${client.timedOut
-	// 			.toTimeString()
-	// 			.slice(0, 8)})`
-	// 	)
-	// }
+const latestMessages = ClientStore(['', '', '']),
+	warns = ClientStore(0),
+	timeouts = ClientStore(false),
+	bursts = ClientStore({ lastSend: 0n, count: 0 })
 
-	// ws timed out
-	if (new Date() < timeouts[client.ip]) {
-		feedback(
-			client,
-			`Trzeba było nie spamić (timeout do ${timeouts[client.ip]
-				.toTimeString()
-				.slice(0, 8)})`
-		)
-		return false
-	}
+var isGoldenHour = false
 
-	// discard and warn
+function cacheMessage(payload: outload) {
+	cachedMessages.push(payload)
+	if (cachedMessages.length > 30) cachedMessages.shift()
+}
+
+function send(client: Client, message: string): number {
+	// client timed out
+	if (new Date() < timeouts[client.ip]) return 1
+
 	// too fast messages
-	if (client.burstCount == CHAT_BURST) {
-		warn(client, 'Zwolnij')
-		return false
+	if (bursts[client.id].count > CHAT_BURST) {
+		return 3
 	}
 
-	if (client.burstCount > CHAT_BURST) {
-		warn(client, 'Za dużo wiadomości')
-		return false
-	}
-
-	// discard
 	// content too long or too short
-	if (message.length > CHAT_MAX_MESSAGE || message.length < 1) {
-		feedback(client, 'Wiadomość musi zawierać od 1 do 120 znaków')
-		return false
-	}
-
-	// discard and warn
-	// repetitive spam
-	// if (this.latestMessages.indexOf(message) != -1) {
-	//     this.warn("Może coś nowego napisz")
-	//     return false
-	// }
+	if (message.length > CHAT_MAX_MESSAGE || message.length < 1) return 4
 
 	// keep latest sent messages
-	latestMessages[client.id] ?? (latestMessages[client.id] = ['', '', ''])
 	let clientLastMsgs = latestMessages[client.id]
 
 	clientLastMsgs.push(message)
@@ -97,23 +72,12 @@ function send(client: Client, message: string) {
 	let messageOffsetAvg = (calc.ab + calc.ac + calc.bc) / 3,
 		messageOffsetMin = Math.min(calc.ab, calc.ac, calc.bc)
 
-	// discard and warn
 	// spam
-	if (messageOffsetAvg <= 0.66) {
-		warn(client, 'we we nie spam')
-		return true
-	}
+	if (messageOffsetAvg <= 0.66) return 5
 
-	// discard and warn
 	// blacklisted words
-	if (
-		new RegExp(['http', '://', '\\.com', '\\.gg', '\\.pl'].join('|')).test(
-			message
-		)
-	) {
-		warn(client, 'Nie wolno tak')
-		return false
-	}
+	const badWords = ['http', '://', '\\.com', '\\.gg', '\\.pl']
+	if (new RegExp(badWords.join('|')).test(message)) return 6
 
 	// discard and warn
 	// repetetive characters
@@ -130,18 +94,7 @@ function send(client: Client, message: string) {
 	//     return
 	// }
 
-	let payload = {
-		nick: client.nick,
-		role: client.role,
-		uid: client.id,
-		content: message,
-		time: new Date(),
-	}
-
-	// Connections.cacheMessage(payload)
-	Client.broadcast('chat', payload)
-
-	return true
+	return 0
 }
 
 function command(client: Client, arg: string[]) {
@@ -201,20 +154,19 @@ function command(client: Client, arg: string[]) {
 	}
 }
 
-function feedback(client: Client, message: string) {
+function feedback(client: Client, content: string) {
 	client.transmit(
 		{
 			nick: 'serwer',
 			role: 'root',
-			content: message,
-			time: new Date(),
+			content,
 		},
 		'chat'
 	)
 }
 
 function warn(client: Client, message: string) {
-	warns[client.ip] ? warns[client.ip]++ : (warns[client.ip] = 1)
+	warns[client.ip]++
 
 	if (warns[client.ip] >= CHAT_MAX_WARNS) {
 		timeout(client, 10)
@@ -233,30 +185,71 @@ function timeout(client: Client, seconds: number) {
 	feedback(client, `Timeout ${seconds}s`)
 }
 
+function toGoldenHour() {
+	let s = new Date().setHours(...goldenHour) - Date.now()
+	return s > 0 ? s : s + 86400e3
+}
+
+function toGoldenHourEnd() {
+	let s = new Date().setHours(...goldenHour) - Date.now() + goldenHourDuration
+	return s > 0 ? s : s + 86400e3
+}
+
+function startGoldenHour() {
+	isGoldenHour = true
+	Client.broadcast('chat', {
+		nick: 'serwer',
+		role: 'root',
+		content: `Włączono czat`,
+	})
+	log.info({ isGoldenHour }, `goldenHour on`)
+	setTimeout(endGoldenHour, toGoldenHourEnd())
+}
+
+function endGoldenHour() {
+	isGoldenHour = false
+	Client.broadcast('chat', {
+		nick: 'serwer',
+		role: 'root',
+		content: `Wyłączono czat`,
+	})
+	log.info({ isGoldenHour }, `goldenHour off`)
+	setTimeout(startGoldenHour, toGoldenHour())
+}
+
+if (toGoldenHour() > toGoldenHourEnd())
+	setTimeout(startGoldenHour, toGoldenHour() - 86400e3)
+else setTimeout(startGoldenHour, toGoldenHour())
+
 const chat: module = {
 	label: 'chat',
 
 	feedback: feedback,
 	warn: warn,
 
-	connect(): outload {
+	connect({ id }): outload {
 		return {
 			flag: 'messages',
 			messages: cachedMessages,
 		}
 	},
 
-	send(client: Client, payload: payloadChat) {
-		client.transmit(payload, 'chat')
-
-		cachedMessages.push(payload)
-		if (cachedMessages.length > 30) cachedMessages.shift()
+	leave({ id }) {
+		delete latestMessages[id]
 	},
 
-	async receive(client: Client, { content }: inload) {
+	send(client, payload) {
+		client.transmit(payload, 'chat')
+	},
+
+	async receive(client, { content }) {
 		if (typeof content != 'string') return
 
 		if (!CHAT_ENABLE) return feedback(client, 'czat tymczasowo niedostępny')
+
+		// if (!isGoldenHour) return feedback(client, 'czat będzie włączony o 21:00')
+
+		const { id, ip, nick, role } = client
 
 		if (!client.captcha.verified && !client.captcha.await) {
 			let { success, score } = await Client.modules.captcha.request(
@@ -283,16 +276,62 @@ const chat: module = {
 			let arg = content.slice(1).split(' ') // split with spaces
 
 			let ok = command(client, arg)
-			log.info(
-				{ id: client.id, ip: client.ip, nick: client.nick, content },
-				`${ok ? '/' : '_'}`
-			)
+			log.info({ id, ip, nick, content }, `${ok ? '/' : '_'}`)
 		} else {
 			// chat parsing
-			let ok = send(client, content)
-			log.info({ id: client.id, ip: client.ip, content }, `${ok ? '#' : '.'}`)
+
+			bursts[client.id] = ((cBursts) => {
+				let now = process.hrtime.bigint()
+
+				if (now - cBursts.lastSend < CHAT_RELEASE * 1e6) cBursts.count += 1
+				else cBursts.count = 1
+
+				cBursts.lastSend = now
+				return cBursts
+			})(bursts[client.id])
+
+			let sendCode = logger.traceTime(() => send(client, content))
+
+			if (sendCode > 0) {
+				switch (sendCode) {
+					case 1:
+						let date = timeouts[client.ip].toTimeString().slice(0, 8)
+						feedback(client, `Trzeba było nie spamić (timeout do ${date})`)
+						break
+					case 2:
+						warn(client, 'Zwolnij')
+						break
+					case 3:
+						warn(client, 'Za dużo wiadomości')
+						break
+					case 4:
+						feedback(client, 'Wiadomość musi zawierać od 1 do 120 znaków')
+						break
+					case 5:
+						warn(client, 'we we nie spam')
+						break
+					case 6:
+						warn(client, 'Nie wolno tak')
+						break
+					default:
+						feedback(client, 'nie.')
+						break
+				}
+			} else {
+				let payload = {
+					nick,
+					role,
+					uid: id,
+					content,
+				}
+
+				Client.broadcast('chat', payload)
+				cacheMessage(payload)
+			}
+
+			log.info({ id, ip, content, sendCode }, `${sendCode > 0 ? '.' : '#'}`)
 		}
 	},
 }
 
-export default chat as module
+export default chat

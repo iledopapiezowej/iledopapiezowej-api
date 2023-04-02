@@ -1,52 +1,47 @@
 import env from '../../env.js'
 
-import Client, { inload, module, outload } from '../../Client.js'
+import Client, { module, outload } from '../../Client.js'
 import logger from '../../log.js'
 
-const { COUNT_HYSTERIA } = env
+const { COUNT_HYSTERIA, COUNT_DELTA } = env
 
 const log = logger.child({ socket: 'count' })
 
-var lastSent = 0,
-	timeSent = Date.now()
+var counter = 0,
+	sentCount = -1,
+	sentTime = Date.now() - COUNT_DELTA
 
 function update() {
-	let change = Math.abs(Client.count - lastSent),
-		delta = Date.now() - timeSent
+	let dTime = Date.now() - sentTime // calculate time difference
 
-	if (delta < 6e3) return // min time between updates
+	if (dTime < COUNT_DELTA) return // enforce min time between updates
+
+	counter = Object.keys(Client.connections).length // count connections
+
+	let dCounter = Math.abs(counter - sentCount) // calculate count difference
 
 	if (
-		change >= COUNT_HYSTERIA || // allow hysteria
-		(Client.count <= COUNT_HYSTERIA && // precision at low counts
-			change > 0) // dont send on no change
+		dCounter >= COUNT_HYSTERIA || // allow hysteria
+		counter <= COUNT_HYSTERIA // precision at low counts
 	) {
-		lastSent = Client.count
-		timeSent = Date.now()
+		sentCount = counter
+		sentTime = Date.now()
 
-		log.info(
-			{ count: Client.count, invis: Client.invisible },
-			`$ ${Client.count}`
-		)
+		log.info({ counter, dTime, dCounter }, `$ ${counter}`)
 
-		Client.broadcast('count', {
-			count: Client.count,
-			invisible: Client.invisible,
-		})
+		Client.broadcast('count', { count: counter })
 	}
 }
 
 const count: module = {
 	label: 'count',
 
-	connect(): outload {
+	connect() {
+		update()
 		return {
-			count: Client.count,
-			invisible: Client.invisible,
+			count: counter,
 		}
 	},
-
-	update,
 
 	leave: update,
 
@@ -54,9 +49,7 @@ const count: module = {
 		client.transmit(payload, 'count')
 	},
 
-	receive(client: Client, { visible }: inload) {
-		Client.visibility(client, visible)
-	},
+	receive(client, {}) {},
 }
 
-export default count as module
+export default count

@@ -1,43 +1,48 @@
-import Client, { inload, module } from '../../Client.js'
+import Client, { module } from '../../Client.js'
 
-//
-type syncLoad = {
-	flag: 'begin' | 'end'
-	heartbeat: true | undefined
-}
-//
+var heartbeats: { [id: Client['id']]: NodeJS.Timer } = {}
 
-const sync = {
+const sync: module = {
 	label: 'sync',
 
-	heartbeat(client: Client) {
-		client.transmit(
-			{
-				flag: 'begin',
-				heartbeat: true,
-			} as syncLoad,
-			'sync'
-		)
-	},
+	connect(client) {
+		// keep the socket alive
+		// cloudflare closes a connection after 100 seconds of silence
+		// sync the time while you're at it
 
-	connect() {
+		heartbeats[client.id] && clearInterval(heartbeats[client.id])
+
+		heartbeats[client.id] = setInterval(() => {
+			client.transmit(
+				{
+					flag: 'begin',
+					heartbeat: true,
+				},
+				'sync'
+			)
+		}, 90e3)
+
 		return {
 			flag: 'begin',
-		} as syncLoad
+		}
 	},
 
-	receive(client: Client, { flag, heartbeat }: inload) {
+	leave(client) {
+		clearInterval(heartbeats[client.id])
+		delete heartbeats[client.id]
+	},
+
+	receive(client, { flag, heartbeat }) {
 		if (flag === 'received')
 			client.transmit(
 				{
 					type: 'sync',
 					flag: 'end',
-					time: Date.now(),
 					heartbeat,
-				} as syncLoad,
+				},
 				'sync'
 			)
 	},
 }
 
-export default sync as module
+export default sync

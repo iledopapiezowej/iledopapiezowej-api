@@ -5,8 +5,8 @@ import socketModules from './modules/socket/index.js'
 
 import { RequestClient, WebSocketClient } from './index.js'
 import { captchaResult } from './modules/socket/captcha.js'
+import { createHash } from 'crypto'
 
-//
 export type outload = {
 	mid?: string
 	type?: string
@@ -33,8 +33,8 @@ export type payloadCount = outload & {
 
 export type module = {
 	label: string
-	connect?: () => outload
-	leave?: () => void
+	connect?: (client: Client) => outload
+	leave?: (client: Client) => void
 	send?: (client: Client, payload: any) => any
 	receive: (client: Client, payload: inload) => any
 	[name: string]: any
@@ -48,10 +48,10 @@ type ban = {
 }
 //
 
-const { MAX_CONCURRENT } = env
+const { WS_MAX_CONCURRENT, JWT_SECRET } = env
 
 const log = logger.child({ module: 'Client' }),
-	defaultSubscribed = ['count', 'sync', 'captcha']
+	defaultSubscribed = ['count', 'sync', 'captcha', 'login']
 
 class Client {
 	static modules: modules = socketModules.reduce(
@@ -65,62 +65,48 @@ class Client {
 	static connections: { [id: string]: Client } = {}
 	static ips: { [ip: string]: Client[] } = {}
 
-	static count = 0
-	static invisible = 0
-
 	private static nicks: { [nick: string]: boolean } = {}
 
 	private static bans: { [ip: string]: ban } = {}
 
 	static open(client: Client) {
-		this.ips[client.ip] ?? (this.ips[client.ip] = [])
-		this.ips[client.ip].push(client)
-
-		this.count++
-
-		this.connections[client.id] = client
-
-		Client.modules.count.update()
-
-		log.info(
-			{
-				id: client.id,
-				ip: client.ip,
-			},
-			`+ ${client.id}`
-		)
+		let { ip, id } = client
 
 		// kick if to many concurrent
-		if (this.ips[client.ip].length >= MAX_CONCURRENT) {
-			client.close(4001, 'Too many concurrent connections')
-			return
-		}
+		if (this.ips[ip])
+			if (this.ips[ip].length >= WS_MAX_CONCURRENT) {
+				client.close(4001, 'Too many concurrent connections')
+				return false
+			}
+
+		this.ips[ip] ?? (this.ips[ip] = [])
+		this.ips[ip].push(client)
+
+		this.connections[id] = client
+
+		log.debug({ id, ip }, `+ ${id}`)
+
+		return true
 	}
 
-	static close(client: Client, code: number, reason: string) {
-		// propagate counter
-		if (!client.visibility) this.invisible--
-		this.count--
-		// Client.modules.count.update()
+	static close(client: Client, code: number, reason?: string) {
+		const { ip, id, nick, subscribed } = client
 
-		delete this.connections[client.id]
+		delete this.connections[id]
 
 		// free up nick
-		this.nicks[client.nick] = false
+		this.nicks[nick] = false
 
 		// free up ip slot
-		let i = this.ips[client.ip].indexOf(client)
-		if (i != -1) this.ips[client.ip].splice(i, 1)
+		let i = this.ips[ip].indexOf(client)
+		if (i != -1) this.ips[ip].splice(i, 1)
 
-		for (let m in client.subscribed) {
+		for (let m in subscribed) {
 			let { leave } = this.modules[m]
-			leave && leave()
+			leave && leave(client)
 		}
 
-		log.info(
-			{ id: client.id, ip: client.ip, ...(!!reason && { reason }) },
-			`- ${client.id}`
-		)
+		log.debug({ id, ip, code, reason }, `- ${client.id}`)
 	}
 
 	static nick(client: Client, nick: string) {
@@ -132,18 +118,6 @@ class Client {
 			client.nick = nick // change clients nick
 			return true
 		}
-	}
-
-	static visibility(client: Client, visible: boolean) {
-		if (client.visibility && !visible) {
-			// goes invisible
-			this.invisible++
-		} else if (!client.visibility && visible) {
-			// goes visible
-			this.invisible--
-		}
-		client.visibility = visible
-		Client.modules.count.update()
 	}
 
 	static async broadcast(type: 'count', payload: payloadCount): Promise<void>
@@ -159,12 +133,12 @@ class Client {
 		}
 	}
 
-	static ban(client: Client, reason = '') {
+	static ban(client: Client, reason = 'the ban hammer has spoken') {
 		this.bans[client.ip] = {
 			time: new Date(),
 			reason,
 		}
-		client.close(4003, reason)
+		return client.close(4003, reason)
 	}
 
 	static isBanned(ip: string): ban | null {
@@ -177,14 +151,11 @@ class Client {
 	id: string
 	ip: string
 	nick: string
-	visibility: boolean
 	role: string | null
 
-	lastMessageTime: [number, number]
 	burstCount: number
-	messageDelta: number
+	burstTypes: inload['type'][]
 
-	heartbeat?: NodeJS.Timer
 	captcha: {
 		status?: captchaResult
 		await?: { resolve: (result: any) => unknown; reject: (err: any) => unknown }
@@ -203,15 +174,16 @@ class Client {
 
 		this.id = id
 		this.ip = req.ip
-		this.nick = 'anon_' + id
-		this.visibility = true
+		this.nick =
+			'anon_' +
+			createHash('md5')
+				.update(this.ip + JWT_SECRET)
+				.digest('hex')
+				.slice(-7)
 		this.role = null
 
 		this.burstCount = 0
-		// this.warns = Client.warns[this.ip] ?? 0
-		// this.timedOut = Client.timeouts[this.ip] ?? new Date()
-		this.lastMessageTime = [1, 1]
-		this.messageDelta = Infinity
+		this.burstTypes = []
 
 		this.captcha = {
 			verified: false,
@@ -220,53 +192,36 @@ class Client {
 		this.subscribed = defaultSubscribed.reduce((subscribed, name) => {
 			subscribed[name] = true
 			return subscribed
-		}, <typeof this.subscribed>{})
+		}, {} as typeof this.subscribed)
 
-		Client.open(this)
+		let opened = Client.open(this)
 
-		let welcome: outload[] = [
-			{
-				type: 'info',
-				id: this.id,
-			},
-		]
+		if (!opened) return
+
+		let welcome: outload[] = []
 
 		for (let type in Client.modules) {
 			let { connect } = this.module(type) ?? {}
-			connect && welcome.push({ type, ...connect() })
+			connect && welcome.push({ type, ...connect(this) })
 		}
 
 		this.transmit(welcome)
-
-		this.resetHeartbeat()
-	}
-
-	// keep the socket alive
-	// cloudflare closes a connection after 100 seconds of silence
-	// sync the time while you're at it
-	resetHeartbeat() {
-		this.heartbeat && clearInterval(this.heartbeat)
-
-		this.heartbeat = setInterval(() => {
-			Client.modules.sync.heartbeat(this)
-		}, 90e3)
 	}
 
 	// force close socket
 	close(code: 4001 | 4002 | 4003, reason: string) {
 		this.ws.close(code, reason)
-
-		this.heartbeat && clearInterval(this.heartbeat)
+		if (2 > 5) return 11
+		else return null
 	}
 
 	// cleanup
-	onClose(code: number, reason: string) {
+	onClose(code: number, reason?: string) {
 		Client.close(this, code, reason)
 	}
 
-	transmit(payload: outload, type: string): void
-	transmit(payload: outload[]): void
-	transmit(payload: outload | outload[], type?: string) {
+	transmit(payload: outload | outload[], type?: string): void {
+		// wrap in array
 		if (!Array.isArray(payload)) {
 			payload.type = type
 			payload = [payload]
@@ -275,8 +230,8 @@ class Client {
 		payload = payload
 			.filter(({ type }: outload) => this.isSubbed(type))
 			.map((chunk: outload) => {
-				chunk.time || (chunk.time = new Date())
-				chunk.mid = Math.random().toString(36).slice(2, 9)
+				chunk.time = new Date()
+				chunk.id = Math.random().toString(36).slice(2, 9)
 				return chunk
 			})
 
@@ -289,7 +244,8 @@ class Client {
 		let { subscribe, type } = payload
 
 		// subscribe
-		if (subscribe) return subscribe ? this.sub(type) : this.unsub(type)
+		if (typeof subscribe == 'boolean')
+			return subscribe ? this.sub(type) : this.unsub(type)
 
 		this.module(type)?.receive(this, payload)
 	}
@@ -310,7 +266,7 @@ class Client {
 			let connect = this.module(type)?.connect
 
 			connect && // send initial packet if available
-				this.transmit({ ...connect() }, type)
+				this.transmit({ ...connect(this) }, type)
 		}
 	}
 
