@@ -9,6 +9,8 @@
 		"module": "esnext",
 		"target": "esnext",
 
+		"skipLibCheck": true,
+
 		"sourceMap": true,
 		"outDir": "build",
 
