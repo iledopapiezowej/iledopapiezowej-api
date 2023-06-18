@@ -13,8 +13,7 @@ const config = dotenv.config({ path: `./${dotfile}` })
 if (config.error) throw `enviroment file ${dotfile} not found`
 
 const env = {
-	PORT_API: 2137,
-	PORT_WS: 2138,
+	PORT: 2137,
 
 	MONGO_HOST: '',
 	MONGO_PORT: -1,

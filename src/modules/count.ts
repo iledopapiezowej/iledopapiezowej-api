@@ -1,7 +1,7 @@
-import env from '../../env.js'
+import env from '../env.js'
 
-import Client, { module, outload } from '../../Client.js'
-import logger from '../../log.js'
+import Client, { module, outload } from '../Client.js'
+import logger from '../log.js'
 
 const { COUNT_HYSTERIA, COUNT_DELTA } = env
 

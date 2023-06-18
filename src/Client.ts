@@ -1,10 +1,13 @@
 import env from './env.js'
 
 import logger from './log.js'
-import socketModules from './modules/socket/index.js'
 
-import { RequestClient, WebSocketClient } from './index.js'
-import { captchaResult } from './modules/socket/captcha.js'
+import captcha, { captchaResult } from './modules/captcha.js'
+import chat from './modules/chat.js'
+import count from './modules/count.js'
+import sync from './modules/sync.js'
+
+import { RequestClient, WS_CODE, WebSocketClient } from './index.js'
 import { createHash } from 'crypto'
 
 export type outload = {
@@ -51,7 +54,8 @@ type ban = {
 const { WS_MAX_CONCURRENT, JWT_SECRET } = env
 
 const log = logger.child({ module: 'Client' }),
-	defaultSubscribed = ['count', 'sync', 'captcha', 'login']
+	socketModules: module[] = [captcha, chat, count, sync],
+	defaultSubscribed = [captcha.label, count.label, sync.label]
 
 class Client {
 	static modules: modules = socketModules.reduce(
@@ -75,7 +79,10 @@ class Client {
 		// kick if to many concurrent
 		if (this.ips[ip])
 			if (this.ips[ip].length >= WS_MAX_CONCURRENT) {
-				client.close(4001, 'Too many concurrent connections')
+				client.close(
+					WS_CODE.TOO_MANY_CONNECTIONS,
+					'Too many concurrent connections'
+				)
 				return false
 			}
 
@@ -110,9 +117,8 @@ class Client {
 	}
 
 	static nick(client: Client, nick: string) {
-		if (this.nicks[nick]) {
-			return false // unavailable
-		} else {
+		if (this.nicks[nick]) return false // unavailable
+		else {
 			this.nicks[nick] = true // reserve the new nick
 			this.nicks[client.nick] = false // free up the old one
 			client.nick = nick // change clients nick
@@ -138,7 +144,7 @@ class Client {
 			time: new Date(),
 			reason,
 		}
-		return client.close(4003, reason)
+		return client.close(WS_CODE.BANNED, reason)
 	}
 
 	static isBanned(ip: string): ban | null {
@@ -209,7 +215,7 @@ class Client {
 	}
 
 	// force close socket
-	close(code: 4001 | 4002 | 4003, reason: string) {
+	close(code: WS_CODE, reason: string) {
 		this.ws.close(code, reason)
 		if (2 > 5) return 11
 		else return null

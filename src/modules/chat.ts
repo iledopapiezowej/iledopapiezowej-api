@@ -1,23 +1,24 @@
-import env from '../../env.js'
+import env from '../env.js'
 
 import levenshtein from 'js-levenshtein'
-import logger from '../../log.js'
+import logger from '../log.js'
 
-import Client, { outload, module } from '../../Client.js'
-import ClientStore from '../../ClientStore.js'
+import Client, { outload, module } from '../Client.js'
+import ClientStore from '../ClientStore.js'
 
 const log = logger.child({ socket: 'chat' })
 
 const {
-		CHAT_ENABLE,
-		CHAT_BURST,
-		CHAT_RELEASE,
-		CHAT_MAX_MESSAGE,
-		CHAT_MAX_NICK,
-		CHAT_RESERVED,
-		CHAT_MAX_WARNS,
-	} = env,
-	goldenHour: [number, number, number, number] = [21, 0, 0, 0],
+	CHAT_ENABLE,
+	CHAT_BURST,
+	CHAT_RELEASE,
+	CHAT_MAX_MESSAGE,
+	CHAT_MAX_NICK,
+	CHAT_RESERVED,
+	CHAT_MAX_WARNS,
+} = env
+
+const goldenHour: [number, number, number, number] = [21, 0, 0, 0],
 	goldenHourDuration = 3600e3
 
 const cachedMessages: outload[] = []
@@ -175,6 +176,7 @@ function warn(client: Client, message: string) {
 		feedback(client, `${message} (${warns[client.ip]}/${CHAT_MAX_WARNS - 1})`)
 }
 
+// @ts-ignore TS7030
 function timeout(client: Client, seconds: number) {
 	if (timeouts[client.ip])
 		if (timeouts[client.ip].getTime() - Date.now() < 30e3) {
@@ -247,15 +249,18 @@ const chat: module = {
 
 		if (!CHAT_ENABLE) return feedback(client, 'czat tymczasowo niedostępny')
 
-		// if (!isGoldenHour) return feedback(client, 'czat będzie włączony o 21:00')
+		if (!isGoldenHour) return feedback(client, 'czat będzie włączony o 21:00')
 
 		const { id, ip, nick, role } = client
 
 		if (!client.captcha.verified && !client.captcha.await) {
-			let { success, score } = await Client.modules.captcha.request(
+			let { success, score } = await Client.modules.captcha.send!(
 				client,
 				'chat'
-			)
+			).catch((err: any) => {
+				log.info({ id: client.id, ip: client.ip, err }, `captcha failed`)
+				return { success: false }
+			})
 
 			if (success) {
 				if (score ?? 0 > 0.75) {
@@ -272,14 +277,11 @@ const chat: module = {
 		}
 
 		if (content.startsWith('/')) {
-			// command parsing
 			let arg = content.slice(1).split(' ') // split with spaces
 
 			let ok = command(client, arg)
 			log.info({ id, ip, nick, content }, `${ok ? '/' : '_'}`)
 		} else {
-			// chat parsing
-
 			bursts[client.id] = ((cBursts) => {
 				let now = process.hrtime.bigint()
 

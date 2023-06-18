@@ -1,4 +1,4 @@
-import Client, { module } from '../../Client.js'
+import Client, { module } from '../Client.js'
 
 var heartbeats: { [id: Client['id']]: NodeJS.Timer } = {}
 

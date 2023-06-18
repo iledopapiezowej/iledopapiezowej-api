@@ -1,21 +1,25 @@
 import env from './env.js'
 
-import express from 'express'
-import bodyParser from 'body-parser'
 import WebSocket, { WebSocketServer } from 'ws'
 import { IncomingMessage } from 'http'
 
 import Client from './Client.js'
 import logger from './log.js'
 
-const { PORT_API, PORT_WS, WS_RELEASE, WS_FLOODING_THRESHOLD, WS_MAX_PAYLOAD } =
-	env
-
-const app = express(),
-	wss = new WebSocketServer({ port: PORT_WS })
-
 export type WebSocketClient = WebSocket & { client: Client }
 export type RequestClient = IncomingMessage & { ip: string }
+
+export enum WS_CODE {
+	TOO_MANY_CONNECTIONS = 4001,
+	FLOODING = 4002,
+	BANNED = 4003,
+}
+
+const { PORT, WS_RELEASE, WS_FLOODING_THRESHOLD, WS_MAX_PAYLOAD } = env
+
+const wss = new WebSocketServer({ port: PORT })
+
+wss.on('listening', () => logger.info(`ws: listening :${PORT}`))
 
 wss.on('connection', (ws: WebSocketClient, req: RequestClient) => {
 	// parse ip
@@ -26,7 +30,7 @@ wss.on('connection', (ws: WebSocketClient, req: RequestClient) => {
 
 	// ip banned
 	if (Client.isBanned(req.ip)) {
-		ws.close(4003, 'Remote address banned')
+		ws.close(WS_CODE.BANNED, 'Remote address banned')
 		return
 	}
 
@@ -39,7 +43,6 @@ wss.on('connection', (ws: WebSocketClient, req: RequestClient) => {
 	let lastMessageTime = 0n
 
 	ws.on('message', async function (payload: Buffer) {
-		// enfore max payload size
 		if (payload.length > WS_MAX_PAYLOAD) return
 
 		try {
@@ -68,16 +71,6 @@ wss.on('connection', (ws: WebSocketClient, req: RequestClient) => {
 			return
 		}
 
-		// Payload parsing
 		client.receive(data)
 	})
 })
-
-app.use(bodyParser.json())
-app.use(bodyParser.urlencoded({ extended: true }))
-
-app.get('/', (req, res) => {
-	res.json({ comment: 'Welcome to iledopapiezowej.pl API' })
-})
-
-app.listen(PORT_API, () => logger.info(`http: listening :${PORT_API}`))
