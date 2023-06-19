@@ -1,53 +1,7 @@
 version: '3'
 services:
   api:
-    build: .
-    container_name: idp_api
     image: idp/api
     restart: always
-    depends_on:
-      - mongo
-      - auth
-    links:
-      - mongo
-      - auth
-
-    environment:
-      MONGO_HOST: mongo
-      MONGO_NAME: api
-      MONGO_USER: idpcred
-      MONGO_PASS: idpcred
     ports:
-      - 2137:2137 # API
-      - 2138:2138 # WS
-
-  auth:
-    image: idp/auth
-    container_name: idp_auth
-    restart: always
-    links:
-      - mongo
-    depends_on:
-      - mongo
-
-    environment:
-      MONGO_HOST: mongo
-      MONGO_NAME: auth
-      MONGO_USER: idpcred
-      MONGO_PASS: idpcred
-    ports:
-      - 2139:2139 # AUTH
-
-  mongo:
-    image: mongo:5.0
-    container_name: idp_mongo
-    restart: always
-    volumes:
-      - ./data/db:/data/db
-    command: 
-      - '--logpath'
-      - '/var/log/mongodb/mongod.log'
-      
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: idpcred
-      MONGO_INITDB_ROOT_PASSWORD: idpcred
+      - 2137:2137

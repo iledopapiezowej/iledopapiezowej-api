@@ -1,7 +1,7 @@
 import env from '../env.js'
+import logger from '../log.js'
 
 import levenshtein from 'js-levenshtein'
-import logger from '../log.js'
 
 import Client, { outload, module } from '../Client.js'
 import ClientStore from '../ClientStore.js'

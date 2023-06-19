@@ -1,17 +1,17 @@
 import env from '../env.js'
+import logger from '../log.js'
 
 import fetch from 'node-fetch'
 
 import Client, { inload, module, outload } from '../Client.js'
-import logger from '../log.js'
 
 type payloadCaptcha = outload & {
 	action: string
 }
 
-const log = logger.child({ module: 'captcha' })
-
 const { RECAPTCHA_SECRET } = env
+
+const log = logger.child({ module: 'captcha' })
 
 export type captchaResult = {
 	success: boolean // whether this request was a valid reCAPTCHA token for your site

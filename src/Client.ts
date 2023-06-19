@@ -1,6 +1,7 @@
 import env from './env.js'
-
 import logger from './log.js'
+
+import { createHash } from 'crypto'
 
 import captcha, { captchaResult } from './modules/captcha.js'
 import chat from './modules/chat.js'
@@ -8,7 +9,6 @@ import count from './modules/count.js'
 import sync from './modules/sync.js'
 
 import { RequestClient, WS_CODE, WebSocketClient } from './index.js'
-import { createHash } from 'crypto'
 
 export type outload = {
 	mid?: string
@@ -49,7 +49,6 @@ type ban = {
 	time: Date
 	reason: string
 }
-//
 
 const { WS_MAX_CONCURRENT, JWT_SECRET } = env
 

@@ -1,9 +1,9 @@
 import env from '../env.js'
-
-import Client, { module, outload } from '../Client.js'
 import logger from '../log.js'
 
-const { COUNT_HYSTERIA, COUNT_DELTA } = env
+import Client, { module, outload } from '../Client.js'
+
+const { COUNT_DELTA } = env
 
 const log = logger.child({ socket: 'count' })
 
@@ -12,25 +12,18 @@ var counter = 0,
 	sentTime = Date.now() - COUNT_DELTA
 
 function update() {
-	let dTime = Date.now() - sentTime // calculate time difference
+	// enforce min time between updates
+	let dTime = Date.now() - sentTime
+	if (dTime < COUNT_DELTA) return
 
-	if (dTime < COUNT_DELTA) return // enforce min time between updates
+	counter = Object.keys(Client.connections).length
 
-	counter = Object.keys(Client.connections).length // count connections
+	sentCount = counter
+	sentTime = Date.now()
 
-	let dCounter = Math.abs(counter - sentCount) // calculate count difference
+	log.info({ counter, dTime }, `$ ${counter}`)
 
-	if (
-		dCounter >= COUNT_HYSTERIA || // allow hysteria
-		counter <= COUNT_HYSTERIA // precision at low counts
-	) {
-		sentCount = counter
-		sentTime = Date.now()
-
-		log.info({ counter, dTime, dCounter }, `$ ${counter}`)
-
-		Client.broadcast('count', { count: counter })
-	}
+	Client.broadcast('count', { count: counter })
 }
 
 const count: module = {
@@ -49,7 +42,7 @@ const count: module = {
 		client.transmit(payload, 'count')
 	},
 
-	receive(client, {}) {},
+	receive() {},
 }
 
 export default count
