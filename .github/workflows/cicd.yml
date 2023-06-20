@@ -28,7 +28,7 @@ jobs:
         run: docker build --target production -t idp/api .
 
       - name: Export image
-        run: docker save idp/api -o idp.tar
+        run: docker save idp/api -o ${{ env.FQDN }}.tar
 
       - name: Upload image
         uses: actions/upload-artifact@master
@@ -82,7 +82,7 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           port: 2280
           username: ${{ secrets.DEPLOY_USERNAME }}
-          key: ${{ secrets.KEY }}
+          key: ${{ secrets.DEPLOY_KEY }}
           script: |
             ~/play.sh \
             deploy-docker \
