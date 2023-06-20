@@ -31,6 +31,7 @@ const env = {
 
 	COUNT_DELTA: 2e3,
 	RECAPTCHA_SECRET: '',
+	JWT_SECRET: '',
 }
 
 for (let key in env) {

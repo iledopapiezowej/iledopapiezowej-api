@@ -13,6 +13,7 @@
 		"docker-build": "docker build --target production -t idp/api .",
 		"docker-build-testing": "docker build --target testing -t idp/api:testing .",
 		"docker-test": "docker run -d --rm --name idp-api-test idp/api:testing && docker exec idp-api-test pnpm test && docker stop idp-api-test",
+		"docker-run": "docker run --rm -p 2137:2137 --name idp-api idp/api",
 		"start": "node ."
 	},
 	"author": "Mateusz Pstrucha",

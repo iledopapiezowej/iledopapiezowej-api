@@ -2,6 +2,6 @@ version: '3'
 services:
   api:
     image: idp/api
-    restart: always
+    restart: unless-stopped
     ports:
-      - 2137:2137
+      - '${PORT}:2137'

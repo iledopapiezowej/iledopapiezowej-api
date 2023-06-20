@@ -1,8 +1,8 @@
-FROM node:18 as production
+FROM node:18-alpine as production
 
 WORKDIR /app
 
-RUN curl -f https://get.pnpm.io/v6.16.js | node - add --global pnpm
+RUN npm install -g pnpm
 
 COPY package.json pnpm-lock.yaml ./
 
@@ -14,7 +14,7 @@ RUN pnpm build
 
 EXPOSE 2137
 
-HEALTHCHECK --interval=5m --timeout=1s \
+HEALTHCHECK --interval=1m --timeout=3s \
   CMD curl --include --no-buffer \
     -H "Connection: close" \
     -H "Upgrade: websocket" \

@@ -18,7 +18,7 @@ const {
 	CHAT_MAX_WARNS,
 } = env
 
-const goldenHour: [number, number, number, number] = [21, 0, 0, 0],
+const goldenHour: [number, number, number, number] = [19, 0, 0, 0],
 	goldenHourDuration = 3600e3
 
 const cachedMessages: outload[] = []

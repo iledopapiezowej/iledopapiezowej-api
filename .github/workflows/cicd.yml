@@ -1,0 +1,91 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'src/**'
+      - '.github/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'tsconfig.json'
+      - 'Jest.config.ts'
+      - 'Dockerfile'
+      - 'docker-compose.yml'
+
+  workflow_dispatch:
+
+env:
+  FQDN: api.iledopapiezowej.pl
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Build
+        run: docker build --target production -t idp/api .
+
+      - name: Export image
+        run: docker save idp/api -o idp.tar
+
+      - name: Upload image
+        uses: actions/upload-artifact@master
+        with:
+          name: image
+          path: ${{ env.FQDN }}.tar
+
+      - name: Upload docker-compose
+        uses: actions/upload-artifact@v3
+        with:
+          name: docker-compose
+          path: docker-compose.yml
+
+  test:
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Build test image
+        run: docker build --target testing -t idp/api:testing .
+
+      - name: Run test
+        run: |
+          docker run -d --rm --name idp-api-test idp/api:testing && \
+          docker exec idp-api-test pnpm test && \
+          docker stop idp-api-test
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [build, test]
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@master
+        with:
+          path: .
+
+      - name: Copy via ssh
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          port: 2280
+          username: ${{ secrets.DEPLOY_USERNAME }}
+          key: ${{ secrets.DEPLOY_KEY }}
+          source: ${{ env.FQDN }}.tar,docker-compose.yml
+          target: ~/docker/${{ env.DOMAIN }}
+
+      - name: Run ansible
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          port: 2280
+          username: ${{ secrets.DEPLOY_USERNAME }}
+          key: ${{ secrets.KEY }}
+          script: |
+            ~/play.sh \
+            deploy-docker \
+            -e DOMAIN=${{ env.DOMAIN }} \
+            -e CERT=iledopapiezowej.pl.cf \
+            -e SSL_ONLY=true
