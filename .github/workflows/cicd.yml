@@ -33,11 +33,13 @@ jobs:
       - name: Upload image
         uses: actions/upload-artifact@master
         with:
+          name: image
           path: ${{ env.FQDN }}.tar
 
       - name: Upload docker-compose
         uses: actions/upload-artifact@v3
         with:
+          name: docker-compose
           path: docker-compose.yml
 
   test:
@@ -59,10 +61,17 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build]
     steps:
-      - name: Download artifacts
+      - name: Download image
         uses: actions/download-artifact@master
         with:
-          path: .
+          name: image
+          path: ${{ env.FQDN }}.tar
+
+      - name: Download docker-compose
+        uses: actions/download-artifact@master
+        with:
+          name: docker-compose
+          path: docker-compose.yml
 
       - name: Copy via ssh
         uses: appleboy/scp-action@master
