@@ -33,13 +33,11 @@ jobs:
       - name: Upload image
         uses: actions/upload-artifact@master
         with:
-          name: image
           path: ${{ env.FQDN }}.tar
 
       - name: Upload docker-compose
         uses: actions/upload-artifact@v3
         with:
-          name: docker-compose
           path: docker-compose.yml
 
   test:
